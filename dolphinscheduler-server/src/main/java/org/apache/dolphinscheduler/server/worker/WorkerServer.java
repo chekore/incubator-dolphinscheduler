@@ -29,12 +29,12 @@ import org.apache.dolphinscheduler.common.thread.ThreadPoolExecutors;
 import org.apache.dolphinscheduler.common.thread.ThreadUtils;
 import org.apache.dolphinscheduler.common.utils.CollectionUtils;
 import org.apache.dolphinscheduler.common.utils.OSUtils;
+import org.apache.dolphinscheduler.common.utils.SpringApplicationContext;
 import org.apache.dolphinscheduler.common.zk.AbstractZKClient;
 import org.apache.dolphinscheduler.dao.AlertDao;
 import org.apache.dolphinscheduler.dao.ProcessDao;
 import org.apache.dolphinscheduler.dao.entity.TaskInstance;
 import org.apache.dolphinscheduler.server.utils.ProcessUtils;
-import org.apache.dolphinscheduler.server.utils.SpringApplicationContext;
 import org.apache.dolphinscheduler.server.worker.config.WorkerConfig;
 import org.apache.dolphinscheduler.server.worker.runner.FetchTaskThread;
 import org.apache.dolphinscheduler.server.zk.ZKWorkerClient;
@@ -129,6 +129,7 @@ public class WorkerServer implements IStoppable {
      * @param args arguments
      */
     public static void main(String[] args) {
+        Thread.currentThread().setName(Constants.THREAD_NAME_WORKER_SERVER);
         new SpringApplicationBuilder(WorkerServer.class).web(WebApplicationType.NONE).run(args);
     }
 
@@ -138,6 +139,8 @@ public class WorkerServer implements IStoppable {
      */
     @PostConstruct
     public void run(){
+        logger.info("start worker server...");
+
         zkWorkerClient.init();
 
         this.taskQueue = TaskQueueFactory.getTaskQueueInstance();
@@ -177,9 +180,7 @@ public class WorkerServer implements IStoppable {
             public void run() {
                 // worker server exit alert
                 if (zkWorkerClient.getActiveMasterNum() <= 1) {
-                    for (int i = 0; i < Constants.DOLPHINSCHEDULER_WARN_TIMES_FAILOVER; i++) {
-                        alertDao.sendServerStopedAlert(1, OSUtils.getHost(), "Worker-Server");
-                    }
+                    alertDao.sendServerStopedAlert(1, OSUtils.getHost(), "Worker-Server");
                 }
                 stop("shutdownhook");
             }
@@ -200,7 +201,7 @@ public class WorkerServer implements IStoppable {
 
         try {
             //execute only once
-            if(Stopper.isStoped()){
+            if(Stopper.isStopped()){
                 return;
             }
 
@@ -213,7 +214,7 @@ public class WorkerServer implements IStoppable {
                 //thread sleep 3 seconds for thread quitely stop
                 Thread.sleep(3000L);
             }catch (Exception e){
-                logger.warn("thread sleep exception:" + e.getMessage(), e);
+                logger.warn("thread sleep exception", e);
             }
 
             try {
@@ -254,7 +255,7 @@ public class WorkerServer implements IStoppable {
             logger.info("zookeeper service stopped");
 
         } catch (Exception e) {
-            logger.error("worker server stop exception : " + e.getMessage(), e);
+            logger.error("worker server stop exception ", e);
             System.exit(-1);
         }
     }
@@ -266,6 +267,7 @@ public class WorkerServer implements IStoppable {
      * @return
      */
     private Runnable heartBeatThread(){
+        logger.info("start worker heart beat thread...");
         Runnable heartBeatThread  = new Runnable() {
             @Override
             public void run() {
@@ -290,22 +292,21 @@ public class WorkerServer implements IStoppable {
         Runnable killProcessThread  = new Runnable() {
             @Override
             public void run() {
-                Set<String> taskInfoSet = taskQueue.smembers(Constants.DOLPHINSCHEDULER_TASKS_KILL);
+                logger.info("start listening kill process thread...");
                 while (Stopper.isRunning()){
-                    try {
-                        Thread.sleep(Constants.SLEEP_TIME_MILLIS);
-                    } catch (InterruptedException e) {
-                        logger.error("interrupted exception",e);
-                    }
-                    // if set is null , return
+                    Set<String> taskInfoSet = taskQueue.smembers(Constants.DOLPHINSCHEDULER_TASKS_KILL);
                     if (CollectionUtils.isNotEmpty(taskInfoSet)){
                         for (String taskInfo : taskInfoSet){
                             killTask(taskInfo, processDao);
                             removeKillInfoFromQueue(taskInfo);
                         }
                     }
-
-                    taskInfoSet = taskQueue.smembers(Constants.DOLPHINSCHEDULER_TASKS_KILL);
+                    try {
+                        Thread.sleep(Constants.SLEEP_TIME_MILLIS);
+                    } catch (InterruptedException e) {
+                        logger.error("interrupted exception",e);
+                        Thread.currentThread().interrupt();
+                    }
                 }
             }
         };

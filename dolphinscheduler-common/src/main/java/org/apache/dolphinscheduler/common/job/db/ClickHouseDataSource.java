@@ -16,7 +16,8 @@
  */
 package org.apache.dolphinscheduler.common.job.db;
 
-import org.apache.commons.lang3.StringUtils;
+import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.common.utils.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,7 +59,7 @@ public class ClickHouseDataSource extends BaseDataSource {
     public void isConnectable() throws Exception {
         Connection con = null;
         try {
-            Class.forName("ru.yandex.clickhouse.ClickHouseDriver");
+            Class.forName(Constants.COM_CLICKHOUSE_JDBC_DRIVER);
             con = DriverManager.getConnection(getJdbcUrl(), getUser(), getPassword());
         } finally {
             if (con != null) {
@@ -66,7 +67,6 @@ public class ClickHouseDataSource extends BaseDataSource {
                     con.close();
                 } catch (SQLException e) {
                     logger.error("ClickHouse datasource try conn close conn error", e);
-                    throw e;
                 }
             }
         }

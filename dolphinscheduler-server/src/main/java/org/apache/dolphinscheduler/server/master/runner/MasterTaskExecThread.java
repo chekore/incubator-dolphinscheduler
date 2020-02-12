@@ -122,7 +122,7 @@ public class MasterTaskExecThread extends MasterBaseTaskExecThread {
                     break;
                 }
                 if(checkTimeout){
-                    long remainTime = getRemaintime(taskTimeoutParameter.getInterval()*60);
+                    long remainTime = getRemaintime(taskTimeoutParameter.getInterval() * 60L);
                     if (remainTime < 0) {
                         logger.warn("task id: {} execution time out",taskInstance.getId());
                         // process define
@@ -137,7 +137,7 @@ public class MasterTaskExecThread extends MasterBaseTaskExecThread {
                 processInstance = processDao.findProcessInstanceById(processInstance.getId());
                 Thread.sleep(Constants.SLEEP_TIME_MILLIS);
             } catch (Exception e) {
-                logger.error("exception: "+ e.getMessage(),e);
+                logger.error("exception",e);
                 if (processInstance != null) {
                     logger.error("wait task quit failed, instance id:{}, task id:{}",
                             processInstance.getId(), taskInstance.getId());

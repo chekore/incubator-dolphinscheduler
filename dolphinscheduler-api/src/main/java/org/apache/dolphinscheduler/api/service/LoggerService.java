@@ -20,9 +20,9 @@ import org.apache.dolphinscheduler.api.enums.Status;
 import org.apache.dolphinscheduler.api.log.LogClient;
 import org.apache.dolphinscheduler.api.utils.Result;
 import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.common.utils.StringUtils;
 import org.apache.dolphinscheduler.dao.ProcessDao;
 import org.apache.dolphinscheduler.dao.entity.TaskInstance;
-import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -84,7 +84,12 @@ public class LoggerService {
     if (taskInstance == null){
       throw new RuntimeException("task instance is null");
     }
+
     String host = taskInstance.getHost();
+    if(StringUtils.isEmpty(host)){
+      throw new RuntimeException("task instance host is null");
+    }
+
     LogClient logClient = new LogClient(host, Constants.RPC_PORT);
     return logClient.getLogBytes(taskInstance.getLogPath());
   }

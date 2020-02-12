@@ -16,7 +16,8 @@
  */
 package org.apache.dolphinscheduler.common.job.db;
 
-import org.apache.commons.lang3.StringUtils;
+import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.common.utils.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -28,9 +29,6 @@ import java.sql.*;
 public class HiveDataSource extends BaseDataSource {
 
   private static final Logger logger = LoggerFactory.getLogger(HiveDataSource.class);
-
-
-
 
   /**
    * gets the JDBC url for the data source connection
@@ -49,8 +47,6 @@ public class HiveDataSource extends BaseDataSource {
       jdbcUrl += ";principal=" + getPrincipal();
     }
 
-
-
     if (StringUtils.isNotEmpty(getOther())) {
       jdbcUrl += ";" + getOther();
     }
@@ -66,7 +62,7 @@ public class HiveDataSource extends BaseDataSource {
   public void isConnectable() throws Exception {
     Connection con = null;
     try {
-      Class.forName("org.apache.hive.jdbc.HiveDriver");
+      Class.forName(Constants.ORG_APACHE_HIVE_JDBC_HIVE_DRIVER);
       con = DriverManager.getConnection(getJdbcUrl(), getUser(), "");
     } finally {
       if (con != null) {
@@ -74,7 +70,6 @@ public class HiveDataSource extends BaseDataSource {
           con.close();
         } catch (SQLException e) {
           logger.error("hive datasource try conn close conn error", e);
-          throw e;
         }
       }
     }

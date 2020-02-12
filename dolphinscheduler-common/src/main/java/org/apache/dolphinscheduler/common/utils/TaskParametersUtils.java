@@ -19,6 +19,7 @@ package org.apache.dolphinscheduler.common.utils;
 import org.apache.dolphinscheduler.common.enums.TaskType;
 import org.apache.dolphinscheduler.common.task.AbstractParameters;
 import org.apache.dolphinscheduler.common.task.dependent.DependentParameters;
+import org.apache.dolphinscheduler.common.task.datax.DataxParameters;
 import org.apache.dolphinscheduler.common.task.flink.FlinkParameters;
 import org.apache.dolphinscheduler.common.task.http.HttpParameters;
 import org.apache.dolphinscheduler.common.task.mr.MapreduceParameters;
@@ -28,7 +29,6 @@ import org.apache.dolphinscheduler.common.task.shell.ShellParameters;
 import org.apache.dolphinscheduler.common.task.spark.SparkParameters;
 import org.apache.dolphinscheduler.common.task.sql.SqlParameters;
 import org.apache.dolphinscheduler.common.task.subprocess.SubProcessParameters;
-import org.apache.commons.lang3.EnumUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,6 +69,8 @@ public class TaskParametersUtils {
           return JSONUtils.parseObject(parameter, FlinkParameters.class);
         case HTTP:
           return JSONUtils.parseObject(parameter, HttpParameters.class);
+        case DATAX:
+          return JSONUtils.parseObject(parameter, DataxParameters.class);
         default:
           return null;
       }

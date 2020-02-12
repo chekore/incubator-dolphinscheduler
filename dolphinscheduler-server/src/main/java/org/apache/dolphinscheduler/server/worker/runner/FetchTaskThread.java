@@ -16,21 +16,18 @@
  */
 package org.apache.dolphinscheduler.server.worker.runner;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.curator.framework.recipes.locks.InterProcessMutex;
 import org.apache.dolphinscheduler.common.Constants;
+import org.apache.dolphinscheduler.common.enums.ExecutionStatus;
 import org.apache.dolphinscheduler.common.queue.ITaskQueue;
 import org.apache.dolphinscheduler.common.thread.Stopper;
 import org.apache.dolphinscheduler.common.thread.ThreadUtils;
-import org.apache.dolphinscheduler.common.utils.CollectionUtils;
-import org.apache.dolphinscheduler.common.utils.FileUtils;
-import org.apache.dolphinscheduler.common.utils.OSUtils;
+import org.apache.dolphinscheduler.common.utils.*;
 import org.apache.dolphinscheduler.common.zk.AbstractZKClient;
 import org.apache.dolphinscheduler.dao.ProcessDao;
 import org.apache.dolphinscheduler.dao.entity.TaskInstance;
 import org.apache.dolphinscheduler.dao.entity.Tenant;
 import org.apache.dolphinscheduler.dao.entity.WorkerGroup;
-import org.apache.dolphinscheduler.server.utils.SpringApplicationContext;
 import org.apache.dolphinscheduler.server.worker.config.WorkerConfig;
 import org.apache.dolphinscheduler.server.zk.ZKWorkerClient;
 import org.slf4j.Logger;
@@ -140,8 +137,10 @@ public class FetchTaskThread implements Runnable{
 
     @Override
     public void run() {
+        logger.info("worker start fetch tasks...");
         while (Stopper.isRunning()){
             InterProcessMutex mutex = null;
+            String currentTaskQueueStr = null;
             try {
                 ThreadPoolExecutor poolExecutor = (ThreadPoolExecutor) workerExecService;
                 //check memory and cpu usage and threads
@@ -153,8 +152,10 @@ public class FetchTaskThread implements Runnable{
                 }
 
                 //whether have tasks, if no tasks , no need lock  //get all tasks
-                List<String> tasksQueueList = taskQueue.getAllTasks(Constants.DOLPHINSCHEDULER_TASKS_QUEUE);
-                if (CollectionUtils.isEmpty(tasksQueueList)){
+                boolean hasTask = taskQueue.hasTask(Constants.DOLPHINSCHEDULER_TASKS_QUEUE);
+
+                if (!hasTask){
+                    Thread.sleep(Constants.SLEEP_TIME_MILLIS);
                     continue;
                 }
                 // creating distributed locks, lock path /dolphinscheduler/lock/worker
@@ -166,6 +167,9 @@ public class FetchTaskThread implements Runnable{
                 List<String> taskQueueStrArr = taskQueue.poll(Constants.DOLPHINSCHEDULER_TASKS_QUEUE, taskNum);
 
                 for(String taskQueueStr : taskQueueStrArr){
+
+                    currentTaskQueueStr = taskQueueStr;
+
                     if (StringUtils.isEmpty(taskQueueStr)) {
                         continue;
                     }
@@ -185,17 +189,25 @@ public class FetchTaskThread implements Runnable{
                     // verify task instance is null
                     if (verifyTaskInstanceIsNull(taskInstance)) {
                         logger.warn("remove task queue : {} due to taskInstance is null", taskQueueStr);
-                        removeNodeFromTaskQueue(taskQueueStr);
+                        processErrorTask(taskQueueStr);
                         continue;
                     }
 
-                    Tenant tenant = processDao.getTenantForProcess(taskInstance.getProcessInstance().getTenantId(),
-                            taskInstance.getProcessDefine().getUserId());
+                    if(!checkWorkerGroup(taskInstance, OSUtils.getHost())){
+                        continue;
+                    }
+
+                    // if process definition is null ,process definition already deleted
+                    int userId = taskInstance.getProcessDefine() == null ? 0 : taskInstance.getProcessDefine().getUserId();
+
+                    Tenant tenant = processDao.getTenantForProcess(
+                            taskInstance.getProcessInstance().getTenantId(),
+                            userId);
 
                     // verify tenant is null
                     if (verifyTenantIsNull(tenant)) {
                         logger.warn("remove task queue : {} due to tenant is null", taskQueueStr);
-                        removeNodeFromTaskQueue(taskQueueStr);
+                        processErrorTask(taskQueueStr);
                         continue;
                     }
 
@@ -205,11 +217,6 @@ public class FetchTaskThread implements Runnable{
                     taskInstance.getProcessInstance().setTenantCode(tenant.getTenantCode());
 
                     logger.info("worker fetch taskId : {} from queue ", taskInstId);
-
-
-                    if(!checkWorkerGroup(taskInstance, OSUtils.getHost())){
-                        continue;
-                    }
 
                     // local execute path
                     String execLocalPath = getExecLocalPath();
@@ -234,11 +241,32 @@ public class FetchTaskThread implements Runnable{
                 }
 
             }catch (Exception e){
+                processErrorTask(currentTaskQueueStr);
                 logger.error("fetch task thread failure" ,e);
             }finally {
                 AbstractZKClient.releaseMutex(mutex);
             }
         }
+    }
+
+    /**
+     * process error task
+     *
+     * @param taskQueueStr task queue str
+     */
+    private void processErrorTask(String taskQueueStr){
+        // remove from zk
+        removeNodeFromTaskQueue(taskQueueStr);
+
+        if (taskInstance != null){
+            processDao.changeTaskState(ExecutionStatus.FAILURE,
+                    taskInstance.getStartTime(),
+                    taskInstance.getHost(),
+                    null,
+                    null,
+                    taskInstId);
+        }
+
     }
 
     /**
@@ -271,8 +299,7 @@ public class FetchTaskThread implements Runnable{
      */
     private boolean verifyTenantIsNull(Tenant tenant) {
         if(tenant == null){
-            logger.error("tenant not exists,process define id : {},process instance id : {},task instance id : {}",
-                    taskInstance.getProcessDefine().getId(),
+            logger.error("tenant not exists,process instance id : {},task instance id : {}",
                     taskInstance.getProcessInstance().getId(),
                     taskInstance.getId());
             return true;

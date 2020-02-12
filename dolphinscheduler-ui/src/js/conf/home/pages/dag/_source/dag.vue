@@ -58,23 +58,31 @@
           </x-button>
           <span class="name">{{name}}</span>
           &nbsp;
-          <span v-if="name"  class="copy-name" @click="_copyName" :data-clipboard-text="name"><i class="ans-icon-copy" data-container="body"  data-toggle="tooltip" :title="$t('Copy name')" ></i></span>
+          <span v-if="name"  class="copy-name" @click="_copyName" :data-clipboard-text="name"><em class="ans-icon-copy" data-container="body"  data-toggle="tooltip" :title="$t('Copy name')" ></em></span>
         </div>
         <div class="save-btn">
-          <div class="operation" style="vertical-align: middle;">
+          <div class="operation" style="vertical-align: middle;"> 
             <a href="javascript:"
                v-for="(item,$index) in toolOperList"
                :class="_operationClass(item)"
                :id="item.code"
                :key="$index"
                @click="_ckOperation(item,$event)">
-              <i :class="item.icon" data-toggle="tooltip" :title="item.description" ></i>
+              <x-button type="text" data-container="body" :icon="item.icon" v-tooltip.light="item.desc"></x-button>
             </a>
           </div>
-          <x-button type="text" icon="ans-icon-triangle-solid-right" @click="dagAutomaticLayout"></x-button>
+          <x-button 
+                  type="primary" 
+                  v-tooltip.light="$t('Format DAG')"
+                  icon="ans-icon-triangle-solid-right" 
+                  size="xsmall" 
+                  data-container="body"
+                  v-if="type === 'instance'"
+                  style="vertical-align: middle;" 
+                  @click="dagAutomaticLayout">
+          </x-button>
           <x-button
-                  data-toggle="tooltip"
-                  :title="$t('Refresh DAG status')"
+                  v-tooltip.light="$t('Refresh DAG status')"
                   data-container="body"
                   style="vertical-align: middle;"
                   icon="ans-icon-refresh"
@@ -156,12 +164,12 @@
     },
     methods: {
       ...mapActions('dag', ['saveDAGchart', 'updateInstance', 'updateDefinition', 'getTaskState']),
-      ...mapMutations('dag', ['addTasks', 'resetParams', 'setIsEditDag', 'setName']),
-      
+      ...mapMutations('dag', ['addTasks', 'cacheTasks', 'resetParams', 'setIsEditDag', 'setName']),
+
       // DAG automatic layout
       dagAutomaticLayout() {
         $('#canvas').html('')
-
+        
       // Destroy round robin
         Dag.init({
         dag: this,
@@ -187,6 +195,9 @@
       })
         if (this.tasks.length) {
           Dag.backfill(true)
+          if (this.type === 'instance') {
+            this._getTaskState(false).then(res => {})
+          }
         } else {
           Dag.create()
         }
@@ -250,8 +261,8 @@
                   let state = dom.find('.state-p')
                   dom.attr('data-state-id', v1.stateId)
                   dom.attr('data-dependent-result', v1.dependentResult || '')
-                  state.append(`<b class="${v1.icoUnicode} ${v1.isSpin ? 'as as-spin' : ''}" style="color:${v1.color}" data-toggle="tooltip" data-html="true" data-container="body"></b>`)
-                  state.find('b').attr('title', titleTpl(v2, v1.desc))
+                  state.append(`<strong class="${v1.icoUnicode} ${v1.isSpin ? 'as as-spin' : ''}" style="color:${v1.color}" data-toggle="tooltip" data-html="true" data-container="body"></strong>`)
+                  state.find('strong').attr('title', titleTpl(v2, v1.desc))
                 }
               })
             })
@@ -487,6 +498,14 @@
                 setTimeout(() => {
                   removeNodesEvent(fromThis)
                 }, 100)
+              },
+              /**
+               * Cache the item
+               * @param item
+               * @param fromThis
+               */
+              cacheTaskInfo({item, fromThis}) {
+                self.cacheTasks(item)
               },
               close ({ flag, fromThis }) {
                 // Edit status does not allow deletion of nodes

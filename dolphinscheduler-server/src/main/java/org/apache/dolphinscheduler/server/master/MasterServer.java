@@ -16,25 +16,24 @@
  */
 package org.apache.dolphinscheduler.server.master;
 
-import org.apache.commons.lang3.StringUtils;
 import org.apache.dolphinscheduler.common.Constants;
 import org.apache.dolphinscheduler.common.IStoppable;
 import org.apache.dolphinscheduler.common.thread.Stopper;
 import org.apache.dolphinscheduler.common.thread.ThreadPoolExecutors;
 import org.apache.dolphinscheduler.common.thread.ThreadUtils;
 import org.apache.dolphinscheduler.common.utils.OSUtils;
+import org.apache.dolphinscheduler.common.utils.SpringApplicationContext;
+import org.apache.dolphinscheduler.common.utils.StringUtils;
 import org.apache.dolphinscheduler.dao.ProcessDao;
 import org.apache.dolphinscheduler.server.master.config.MasterConfig;
 import org.apache.dolphinscheduler.server.master.runner.MasterSchedulerThread;
-import org.apache.dolphinscheduler.server.quartz.ProcessScheduleJob;
-import org.apache.dolphinscheduler.server.quartz.QuartzExecutors;
-import org.apache.dolphinscheduler.server.utils.SpringApplicationContext;
+import org.apache.dolphinscheduler.dao.quartz.ProcessScheduleJob;
+import org.apache.dolphinscheduler.dao.quartz.QuartzExecutors;
 import org.apache.dolphinscheduler.server.zk.ZKMasterClient;
 import org.quartz.SchedulerException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.annotation.ComponentScan;
@@ -98,7 +97,9 @@ public class MasterServer implements IStoppable {
      * @param args arguments
      */
     public static void main(String[] args) {
+        Thread.currentThread().setName(Constants.THREAD_NAME_MASTER_SERVER);
         new SpringApplicationBuilder(MasterServer.class).web(WebApplicationType.NONE).run(args);
+
     }
 
     /**
@@ -134,6 +135,7 @@ public class MasterServer implements IStoppable {
         // start QuartzExecutors
         // what system should do if exception
         try {
+            logger.info("start Quartz server...");
             ProcessScheduleJob.init(processDao);
             QuartzExecutors.getInstance().start();
         } catch (Exception e) {
@@ -142,7 +144,7 @@ public class MasterServer implements IStoppable {
             } catch (SchedulerException e1) {
                 logger.error("QuartzExecutors shutdown failed : " + e1.getMessage(), e1);
             }
-            logger.error("start Quartz failed : " + e.getMessage(), e);
+            logger.error("start Quartz failed", e);
         }
 
 
@@ -153,10 +155,8 @@ public class MasterServer implements IStoppable {
             @Override
             public void run() {
                 if (zkMasterClient.getActiveMasterNum() <= 1) {
-                    for (int i = 0; i < Constants.DOLPHINSCHEDULER_WARN_TIMES_FAILOVER; i++) {
-                        zkMasterClient.getAlertDao().sendServerStopedAlert(
-                                1, OSUtils.getHost(), "Master-Server");
-                    }
+                    zkMasterClient.getAlertDao().sendServerStopedAlert(
+                        1, OSUtils.getHost(), "Master-Server");
                 }
                 stop("shutdownhook");
             }
@@ -173,7 +173,7 @@ public class MasterServer implements IStoppable {
 
         try {
             //execute only once
-            if(Stopper.isStoped()){
+            if(Stopper.isStopped()){
                 return;
             }
 
@@ -186,7 +186,7 @@ public class MasterServer implements IStoppable {
                 //thread sleep 3 seconds for thread quitely stop
                 Thread.sleep(3000L);
             }catch (Exception e){
-                logger.warn("thread sleep exception:" + e.getMessage(), e);
+                logger.warn("thread sleep exception ", e);
             }
             try {
                 heartbeatMasterService.shutdownNow();
@@ -231,7 +231,7 @@ public class MasterServer implements IStoppable {
 
 
         } catch (Exception e) {
-            logger.error("master server stop exception : " + e.getMessage(), e);
+            logger.error("master server stop exception ", e);
             System.exit(-1);
         }
     }
@@ -242,6 +242,7 @@ public class MasterServer implements IStoppable {
      * @return
      */
     private Runnable heartBeatThread(){
+        logger.info("start master heart beat thread...");
         Runnable heartBeatThread  = new Runnable() {
             @Override
             public void run() {
