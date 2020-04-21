@@ -319,23 +319,90 @@ public class DagHelper {
 
         DAG<String,TaskNode,TaskNodeRelation> dag = new DAG<>();
 
-        /**
-         * add vertex
-         */
+        //add vertex
         if (CollectionUtils.isNotEmpty(processDag.getNodes())){
             for (TaskNode node : processDag.getNodes()){
                 dag.addNode(node.getName(),node);
             }
         }
 
-        /**
-         * add edge
-         */
+        //add edge
         if (CollectionUtils.isNotEmpty(processDag.getEdges())){
             for (TaskNodeRelation edge : processDag.getEdges()){
                 dag.addEdge(edge.getStartNode(),edge.getEndNode());
             }
         }
         return dag;
+    }
+
+    /**
+     * get process dag
+     * @param taskNodeList task node list
+     * @return Process dag
+     */
+    public static ProcessDag getProcessDag(List<TaskNode> taskNodeList) {
+        List<TaskNodeRelation> taskNodeRelations = new ArrayList<>();
+
+        // Traverse node information and build relationships
+        for (TaskNode taskNode : taskNodeList) {
+            String preTasks = taskNode.getPreTasks();
+            List<String> preTasksList = JSONUtils.toList(preTasks, String.class);
+
+            // If the dependency is not empty
+            if (preTasksList != null) {
+                for (String depNode : preTasksList) {
+                    taskNodeRelations.add(new TaskNodeRelation(depNode, taskNode.getName()));
+                }
+            }
+        }
+
+        ProcessDag processDag = new ProcessDag();
+        processDag.setEdges(taskNodeRelations);
+        processDag.setNodes(taskNodeList);
+        return processDag;
+    }
+
+    /**
+     * is there have conditions after the parent node
+     * @param parentNodeName
+     * @return
+     */
+    public static boolean haveConditionsAfterNode(String parentNodeName,
+                                                  DAG<String, TaskNode, TaskNodeRelation> dag
+                                            ){
+        boolean result = false;
+        Set<String> subsequentNodes = dag.getSubsequentNodes(parentNodeName);
+        if(CollectionUtils.isEmpty(subsequentNodes)){
+            return result;
+        }
+        for(String nodeName : subsequentNodes){
+            TaskNode taskNode = dag.getNode(nodeName);
+            List<String> preTasksList = JSONUtils.toList(taskNode.getPreTasks(), String.class);
+            if(preTasksList.contains(parentNodeName) && taskNode.isConditionsTask()){
+                return true;
+            }
+        }
+        return result;
+    }
+
+    /**
+     * is there have conditions after the parent node
+     * @param parentNodeName
+     * @return
+     */
+    public static boolean haveConditionsAfterNode(String parentNodeName,
+                                                  List<TaskNode> taskNodes
+    ){
+        boolean result = false;
+        if(CollectionUtils.isEmpty(taskNodes)){
+            return result;
+        }
+        for(TaskNode taskNode : taskNodes){
+            List<String> preTasksList = JSONUtils.toList(taskNode.getPreTasks(), String.class);
+            if(preTasksList.contains(parentNodeName) && taskNode.isConditionsTask()){
+                return true;
+            }
+        }
+        return result;
     }
 }

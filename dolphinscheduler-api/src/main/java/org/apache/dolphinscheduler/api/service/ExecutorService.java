@@ -25,12 +25,12 @@ import org.apache.dolphinscheduler.common.utils.CollectionUtils;
 import org.apache.dolphinscheduler.common.utils.DateUtils;
 import org.apache.dolphinscheduler.common.utils.JSONUtils;
 import org.apache.dolphinscheduler.common.utils.StringUtils;
-import org.apache.dolphinscheduler.dao.ProcessDao;
 import org.apache.dolphinscheduler.dao.entity.*;
 import org.apache.dolphinscheduler.dao.mapper.ProcessDefinitionMapper;
 import org.apache.dolphinscheduler.dao.mapper.ProcessInstanceMapper;
 import org.apache.dolphinscheduler.dao.mapper.ProjectMapper;
-import org.apache.dolphinscheduler.dao.utils.cron.CronUtils;
+import org.apache.dolphinscheduler.service.process.ProcessService;
+import org.apache.dolphinscheduler.service.quartz.cron.CronUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -67,7 +67,7 @@ public class ExecutorService extends BaseService{
 
 
     @Autowired
-    private ProcessDao processDao;
+    private ProcessService processService;
 
     /**
      * execute process instance
@@ -85,7 +85,7 @@ public class ExecutorService extends BaseService{
      * @param receivers             receivers
      * @param receiversCc           receivers cc
      * @param processInstancePriority process instance priority
-     * @param workerGroupId worker group id
+     * @param workerGroup worker group name
      * @param runMode run mode
      * @param timeout               timeout
      * @return execute process instance code
@@ -96,9 +96,9 @@ public class ExecutorService extends BaseService{
                                                    FailureStrategy failureStrategy, String startNodeList,
                                                    TaskDependType taskDependType, WarningType warningType, int warningGroupId,
                                                    String receivers, String receiversCc, RunMode runMode,
-                                                   Priority processInstancePriority, int workerGroupId, Integer timeout) throws ParseException {
+                                                   Priority processInstancePriority, String workerGroup, Integer timeout) throws ParseException {
         Map<String, Object> result = new HashMap<>(5);
-        // timeout is valid
+        // timeout is invalid
         if (timeout <= 0 || timeout > MAX_TASK_TIMEOUT) {
             putMsg(result,Status.TASK_TIMEOUT_PARAMS_ERROR);
             return result;
@@ -117,7 +117,7 @@ public class ExecutorService extends BaseService{
         }
 
         if (!checkTenantSuitable(processDefinition)){
-            logger.error("there is not any vaild tenant for the process definition: id:{},name:{}, ",
+            logger.error("there is not any valid tenant for the process definition: id:{},name:{}, ",
                     processDefinition.getId(), processDefinition.getName());
             putMsg(result, Status.TENANT_NOT_SUITABLE);
             return result;
@@ -128,7 +128,7 @@ public class ExecutorService extends BaseService{
          */
         int create = this.createCommand(commandType, processDefinitionId,
                 taskDependType, failureStrategy, startNodeList, cronTime, warningType, loginUser.getId(),
-                warningGroupId, runMode,processInstancePriority, workerGroupId);
+                warningGroupId, runMode,processInstancePriority, workerGroup);
         if(create > 0 ){
             /**
              * according to the process definition ID updateProcessInstance and CC recipient
@@ -186,13 +186,13 @@ public class ExecutorService extends BaseService{
             return checkResult;
         }
 
-        ProcessInstance processInstance = processDao.findProcessInstanceDetailById(processInstanceId);
+        ProcessInstance processInstance = processService.findProcessInstanceDetailById(processInstanceId);
         if (processInstance == null) {
             putMsg(result, Status.PROCESS_INSTANCE_NOT_EXIST, processInstanceId);
             return result;
         }
 
-        ProcessDefinition processDefinition = processDao.findProcessDefineById(processInstance.getProcessDefinitionId());
+        ProcessDefinition processDefinition = processService.findProcessDefineById(processInstance.getProcessDefinitionId());
         if(executeType != ExecuteType.STOP && executeType != ExecuteType.PAUSE){
             result = checkProcessDefinitionValid(processDefinition, processInstance.getProcessDefinitionId());
             if (result.get(Constants.STATUS) != Status.SUCCESS) {
@@ -206,7 +206,7 @@ public class ExecutorService extends BaseService{
             return checkResult;
         }
         if (!checkTenantSuitable(processDefinition)){
-            logger.error("there is not any vaild tenant for the process definition: id:{},name:{}, ",
+            logger.error("there is not any valid tenant for the process definition: id:{},name:{}, ",
                     processDefinition.getId(), processDefinition.getName());
             putMsg(result, Status.TENANT_NOT_SUITABLE);
         }
@@ -225,24 +225,18 @@ public class ExecutorService extends BaseService{
                 if (processInstance.getState() == ExecutionStatus.READY_STOP) {
                     putMsg(result, Status.PROCESS_INSTANCE_ALREADY_CHANGED, processInstance.getName(), processInstance.getState());
                 } else {
-                    processInstance.setCommandType(CommandType.STOP);
-                    processInstance.addHistoryCmd(CommandType.STOP);
-                    processDao.updateProcessInstance(processInstance);
-                    result = updateProcessInstanceState(processInstanceId, ExecutionStatus.READY_STOP);
+                    result = updateProcessInstancePrepare(processInstance, CommandType.STOP, ExecutionStatus.READY_STOP);
                 }
                 break;
             case PAUSE:
                 if (processInstance.getState() == ExecutionStatus.READY_PAUSE) {
                     putMsg(result, Status.PROCESS_INSTANCE_ALREADY_CHANGED, processInstance.getName(), processInstance.getState());
                 } else {
-                    processInstance.setCommandType(CommandType.PAUSE);
-                    processInstance.addHistoryCmd(CommandType.PAUSE);
-                    processDao.updateProcessInstance(processInstance);
-                    result = updateProcessInstanceState(processInstanceId, ExecutionStatus.READY_PAUSE);
+                    result = updateProcessInstancePrepare(processInstance, CommandType.PAUSE, ExecutionStatus.READY_PAUSE);
                 }
                 break;
             default:
-                logger.error(String.format("unknown execute type : %s", executeType.toString()));
+                logger.error("unknown execute type : {}", executeType);
                 putMsg(result, Status.REQUEST_PARAMS_NOT_VALID_ERROR, "unknown execute type");
 
                 break;
@@ -257,12 +251,9 @@ public class ExecutorService extends BaseService{
      */
     private boolean checkTenantSuitable(ProcessDefinition processDefinition) {
         // checkTenantExists();
-        Tenant tenant = processDao.getTenantForProcess(processDefinition.getTenantId(),
+        Tenant tenant = processService.getTenantForProcess(processDefinition.getTenantId(),
                 processDefinition.getUserId());
-        if(tenant == null){
-            return false;
-        }
-        return true;
+        return tenant != null;
     }
 
     /**
@@ -298,6 +289,7 @@ public class ExecutorService extends BaseService{
                 if (executionStatus.typeIsPause()|| executionStatus.typeIsCancel()) {
                     checkResult = true;
                 }
+                break;
             default:
                 break;
         }
@@ -310,22 +302,27 @@ public class ExecutorService extends BaseService{
     }
 
     /**
-     * update process instance state
+     *  prepare to update process instance command type and status
      *
-     * @param processInstanceId process instance id
+     * @param processInstance process instance
+     * @param commandType command type
      * @param executionStatus execute status
      * @return update result
      */
-    private Map<String, Object> updateProcessInstanceState(Integer processInstanceId, ExecutionStatus executionStatus) {
+    private Map<String, Object> updateProcessInstancePrepare(ProcessInstance processInstance, CommandType commandType, ExecutionStatus executionStatus) {
         Map<String, Object> result = new HashMap<>(5);
 
-        int update = processDao.updateProcessInstanceState(processInstanceId, executionStatus);
+        processInstance.setCommandType(commandType);
+        processInstance.addHistoryCmd(commandType);
+        processInstance.setState(executionStatus);
+        int update = processService.updateProcessInstance(processInstance);
+
+        // determine whether the process is normal
         if (update > 0) {
             putMsg(result, Status.SUCCESS);
         } else {
             putMsg(result, Status.EXECUTE_PROCESS_INSTANCE_ERROR);
         }
-
         return result;
     }
 
@@ -347,12 +344,12 @@ public class ExecutorService extends BaseService{
                 CMDPARAM_RECOVER_PROCESS_ID_STRING, instanceId));
         command.setExecutorId(loginUser.getId());
 
-        if(!processDao.verifyIsNeedCreateCommand(command)){
+        if(!processService.verifyIsNeedCreateCommand(command)){
             putMsg(result, Status.PROCESS_INSTANCE_EXECUTING_COMMAND,processDefinitionId);
             return result;
         }
 
-        int create = processDao.createCommand(command);
+        int create = processService.createCommand(command);
 
         if (create > 0) {
             putMsg(result, Status.SUCCESS);
@@ -369,19 +366,18 @@ public class ExecutorService extends BaseService{
      * @return check result code
      */
     public Map<String, Object> startCheckByProcessDefinedId(int processDefineId) {
-        Map<String, Object> result = new HashMap<String, Object>();
+        Map<String, Object> result = new HashMap<>();
 
         if (processDefineId == 0){
             logger.error("process definition id is null");
             putMsg(result,Status.REQUEST_PARAMS_NOT_VALID_ERROR,"process definition id");
         }
         List<Integer> ids = new ArrayList<>();
-        processDao.recurseFindSubProcessId(processDefineId, ids);
+        processService.recurseFindSubProcessId(processDefineId, ids);
         Integer[] idArray = ids.toArray(new Integer[ids.size()]);
-        if (ids.size() > 0){
-            List<ProcessDefinition> processDefinitionList;
-            processDefinitionList = processDefinitionMapper.queryDefinitionListByIdList(idArray);
-            if (processDefinitionList != null && processDefinitionList.size() > 0){
+        if (!ids.isEmpty()){
+            List<ProcessDefinition> processDefinitionList = processDefinitionMapper.queryDefinitionListByIdList(idArray);
+            if (processDefinitionList != null){
                 for (ProcessDefinition processDefinition : processDefinitionList){
                     /**
                      * if there is no online process, exit directly
@@ -438,25 +434,26 @@ public class ExecutorService extends BaseService{
 
     /**
      * create command
-     *
-     * @param commandType
-     * @param processDefineId
-     * @param nodeDep
-     * @param failureStrategy
-     * @param startNodeList
-     * @param schedule
-     * @param warningType
-     * @param excutorId
-     * @param warningGroupId
-     * @param runMode
-     * @return
+     * @param commandType commandType
+     * @param processDefineId processDefineId
+     * @param nodeDep nodeDep
+     * @param failureStrategy failureStrategy
+     * @param startNodeList startNodeList
+     * @param schedule schedule
+     * @param warningType warningType
+     * @param executorId executorId
+     * @param warningGroupId warningGroupId
+     * @param runMode runMode
+     * @param processInstancePriority processInstancePriority
+     * @param workerGroup workerGroup
+     * @return command id
      * @throws ParseException
      */
     private int createCommand(CommandType commandType, int processDefineId,
                               TaskDependType nodeDep, FailureStrategy failureStrategy,
                               String startNodeList, String schedule, WarningType warningType,
-                              int excutorId, int warningGroupId,
-                              RunMode runMode,Priority processInstancePriority, int workerGroupId) throws ParseException {
+                              int executorId, int warningGroupId,
+                              RunMode runMode,Priority processInstancePriority, String workerGroup) throws ParseException {
 
         /**
          * instantiate command schedule instance
@@ -484,10 +481,10 @@ public class ExecutorService extends BaseService{
             command.setWarningType(warningType);
         }
         command.setCommandParam(JSONUtils.toJson(cmdParam));
-        command.setExecutorId(excutorId);
+        command.setExecutorId(executorId);
         command.setWarningGroupId(warningGroupId);
         command.setProcessInstancePriority(processInstancePriority);
-        command.setWorkerGroupId(workerGroupId);
+        command.setWorkerGroup(workerGroup);
 
         Date start = null;
         Date end = null;
@@ -499,6 +496,7 @@ public class ExecutorService extends BaseService{
             }
         }
 
+        // determine whether to complement
         if(commandType == CommandType.COMPLEMENT_DATA){
             runMode = (runMode == null) ? RunMode.RUN_MODE_SERIAL : runMode;
             if(null != start && null != end && start.before(end)){
@@ -506,9 +504,9 @@ public class ExecutorService extends BaseService{
                     cmdParam.put(CMDPARAM_COMPLEMENT_DATA_START_DATE, DateUtils.dateToString(start));
                     cmdParam.put(CMDPARAM_COMPLEMENT_DATA_END_DATE, DateUtils.dateToString(end));
                     command.setCommandParam(JSONUtils.toJson(cmdParam));
-                    return processDao.createCommand(command);
+                    return processService.createCommand(command);
                 }else if (runMode == RunMode.RUN_MODE_PARALLEL){
-                    List<Schedule> schedules = processDao.queryReleaseSchedulerListByProcessDefinitionId(processDefineId);
+                    List<Schedule> schedules = processService.queryReleaseSchedulerListByProcessDefinitionId(processDefineId);
                     List<Date> listDate = new LinkedList<>();
                     if(!CollectionUtils.isEmpty(schedules)){
                         for (Schedule item : schedules) {
@@ -521,7 +519,7 @@ public class ExecutorService extends BaseService{
                             cmdParam.put(CMDPARAM_COMPLEMENT_DATA_START_DATE, DateUtils.dateToString(date));
                             cmdParam.put(CMDPARAM_COMPLEMENT_DATA_END_DATE, DateUtils.dateToString(date));
                             command.setCommandParam(JSONUtils.toJson(cmdParam));
-                            processDao.createCommand(command);
+                            processService.createCommand(command);
                         }
                         return listDate.size();
                     }else{
@@ -532,19 +530,19 @@ public class ExecutorService extends BaseService{
                             cmdParam.put(CMDPARAM_COMPLEMENT_DATA_START_DATE, DateUtils.dateToString(start));
                             cmdParam.put(CMDPARAM_COMPLEMENT_DATA_END_DATE, DateUtils.dateToString(start));
                             command.setCommandParam(JSONUtils.toJson(cmdParam));
-                            processDao.createCommand(command);
+                            processService.createCommand(command);
                             start = DateUtils.getSomeDay(start, 1);
                         }
                         return runCunt;
                     }
                 }
             }else{
-                logger.error("there is not vaild schedule date for the process definition: id:{},date:{}",
+                logger.error("there is not valid schedule date for the process definition: id:{},date:{}",
                         processDefineId, schedule);
             }
         }else{
             command.setCommandParam(JSONUtils.toJson(cmdParam));
-            return processDao.createCommand(command);
+            return processService.createCommand(command);
         }
 
         return 0;

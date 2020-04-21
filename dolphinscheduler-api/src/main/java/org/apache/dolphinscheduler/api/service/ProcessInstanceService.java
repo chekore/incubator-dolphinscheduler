@@ -16,6 +16,7 @@
  */
 package org.apache.dolphinscheduler.api.service;
 
+import java.nio.charset.StandardCharsets;
 import org.apache.dolphinscheduler.api.dto.gantt.GanttDto;
 import org.apache.dolphinscheduler.api.dto.gantt.Task;
 import org.apache.dolphinscheduler.api.enums.Status;
@@ -30,15 +31,14 @@ import org.apache.dolphinscheduler.common.graph.DAG;
 import org.apache.dolphinscheduler.common.model.TaskNode;
 import org.apache.dolphinscheduler.common.model.TaskNodeRelation;
 import org.apache.dolphinscheduler.common.process.Property;
-import org.apache.dolphinscheduler.common.queue.ITaskQueue;
 import org.apache.dolphinscheduler.common.utils.*;
 import org.apache.dolphinscheduler.common.utils.placeholder.BusinessTimeUtils;
-import org.apache.dolphinscheduler.dao.ProcessDao;
 import com.alibaba.fastjson.JSON;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.apache.dolphinscheduler.dao.entity.*;
 import org.apache.dolphinscheduler.dao.mapper.*;
+import org.apache.dolphinscheduler.service.process.ProcessService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,7 +49,6 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -72,7 +71,7 @@ public class ProcessInstanceService extends BaseDAGService {
     ProjectService projectService;
 
     @Autowired
-    ProcessDao processDao;
+    ProcessService processService;
 
     @Autowired
     ProcessInstanceMapper processInstanceMapper;
@@ -95,6 +94,9 @@ public class ProcessInstanceService extends BaseDAGService {
     @Autowired
     WorkerGroupMapper workerGroupMapper;
 
+    @Autowired
+    UsersService usersService;
+
     /**
      * query process instance by id
      *
@@ -112,20 +114,9 @@ public class ProcessInstanceService extends BaseDAGService {
         if (resultEnum != Status.SUCCESS) {
             return checkResult;
         }
-        ProcessInstance processInstance = processDao.findProcessInstanceDetailById(processId);
-        String workerGroupName = "";
-        if(processInstance.getWorkerGroupId() == -1){
-            workerGroupName = DEFAULT;
-        }else{
-            WorkerGroup workerGroup = workerGroupMapper.selectById(processInstance.getWorkerGroupId());
-            if(workerGroup != null){
-                workerGroupName = workerGroup.getName();
-            }else{
-                workerGroupName = DEFAULT;
-            }
-        }
-        processInstance.setWorkerGroupName(workerGroupName);
-        ProcessDefinition processDefinition = processDao.findProcessDefineById(processInstance.getProcessDefinitionId());
+        ProcessInstance processInstance = processService.findProcessInstanceDetailById(processId);
+
+        ProcessDefinition processDefinition = processService.findProcessDefineById(processInstance.getProcessDefinitionId());
         processInstance.setReceivers(processDefinition.getReceivers());
         processInstance.setReceiversCc(processDefinition.getReceiversCc());
         result.put(Constants.DATA_LIST, processInstance);
@@ -151,7 +142,7 @@ public class ProcessInstanceService extends BaseDAGService {
      */
     public Map<String, Object> queryProcessInstanceList(User loginUser, String projectName, Integer processDefineId,
                                                         String startDate, String endDate,
-                                                        String searchVal, ExecutionStatus stateType, String host,
+                                                        String searchVal, String executorName,ExecutionStatus stateType, String host,
                                                         Integer pageNo, Integer pageSize) {
 
         Map<String, Object> result = new HashMap<>(5);
@@ -182,27 +173,27 @@ public class ProcessInstanceService extends BaseDAGService {
             putMsg(result, Status.REQUEST_PARAMS_NOT_VALID_ERROR, "startDate,endDate");
             return result;
         }
+
         Page<ProcessInstance> page = new Page(pageNo, pageSize);
+        PageInfo pageInfo = new PageInfo<ProcessInstance>(pageNo, pageSize);
+        int executorId = usersService.getUserIdByName(executorName);
 
         IPage<ProcessInstance> processInstanceList =
                 processInstanceMapper.queryProcessInstanceListPaging(page,
-                project.getId(), processDefineId, searchVal, statusArray, host, start, end);
+                project.getId(), processDefineId, searchVal, executorId,statusArray, host, start, end);
 
         List<ProcessInstance> processInstances = processInstanceList.getRecords();
 
         for(ProcessInstance processInstance: processInstances){
             processInstance.setDuration(DateUtils.differSec(processInstance.getStartTime(),processInstance.getEndTime()));
+            User executor = usersService.queryUser(processInstance.getExecutorId());
+            if (null != executor) {
+                processInstance.setExecutorName(executor.getUserName());
+            }
         }
 
-        Set<String> exclusionSet = new HashSet<String>();
-        exclusionSet.add(Constants.CLASS);
-        exclusionSet.add("locations");
-        exclusionSet.add("connects");
-        exclusionSet.add("processInstanceJson");
-
-        PageInfo pageInfo = new PageInfo<ProcessInstance>(pageNo, pageSize);
         pageInfo.setTotalCount((int) processInstanceList.getTotal());
-        pageInfo.setLists(CollectionUtils.getListByExclusion(processInstances, exclusionSet));
+        pageInfo.setLists(processInstances);
         result.put(Constants.DATA_LIST, pageInfo);
         putMsg(result, Status.SUCCESS);
         return result;
@@ -228,9 +219,9 @@ public class ProcessInstanceService extends BaseDAGService {
         if (resultEnum != Status.SUCCESS) {
             return checkResult;
         }
-        ProcessInstance processInstance = processDao.findProcessInstanceDetailById(processId);
-        List<TaskInstance> taskInstanceList = processDao.findValidTaskListByProcessId(processId);
-        AddDependResultForTaskList(taskInstanceList);
+        ProcessInstance processInstance = processService.findProcessInstanceDetailById(processId);
+        List<TaskInstance> taskInstanceList = processService.findValidTaskListByProcessId(processId);
+        addDependResultForTaskList(taskInstanceList);
         Map<String, Object> resultMap = new HashMap<>();
         resultMap.put(PROCESS_INSTANCE_STATE, processInstance.getState().toString());
         resultMap.put(TASK_LIST, taskInstanceList);
@@ -244,9 +235,9 @@ public class ProcessInstanceService extends BaseDAGService {
      * add dependent result for dependent task
      * @param taskInstanceList
      */
-    private void AddDependResultForTaskList(List<TaskInstance> taskInstanceList) throws IOException {
+    private void addDependResultForTaskList(List<TaskInstance> taskInstanceList) throws IOException {
         for(TaskInstance taskInstance: taskInstanceList){
-            if(taskInstance.getTaskType().toUpperCase().equals(TaskType.DEPENDENT.toString())){
+            if(taskInstance.getTaskType().equalsIgnoreCase(TaskType.DEPENDENT.toString())){
                 Result logResult = loggerService.queryLog(
                         taskInstance.getId(), 0, 4098);
                 if(logResult.getCode() == Status.SUCCESS.ordinal()){
@@ -264,7 +255,8 @@ public class ProcessInstanceService extends BaseDAGService {
             return resultMap;
         }
 
-        BufferedReader br = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(log.getBytes(Charset.forName("utf8"))), Charset.forName("utf8")));
+        BufferedReader br = new BufferedReader(new InputStreamReader(new ByteArrayInputStream(log.getBytes(
+            StandardCharsets.UTF_8)), StandardCharsets.UTF_8));
         String line;
         while ((line = br.readLine()) != null) {
             if(line.contains(DEPENDENT_SPLIT)){
@@ -304,7 +296,7 @@ public class ProcessInstanceService extends BaseDAGService {
             return checkResult;
         }
 
-        TaskInstance taskInstance = processDao.findTaskInstanceById(taskId);
+        TaskInstance taskInstance = processService.findTaskInstanceById(taskId);
         if (taskInstance == null) {
             putMsg(result, Status.TASK_INSTANCE_NOT_EXISTS, taskId);
             return result;
@@ -314,7 +306,7 @@ public class ProcessInstanceService extends BaseDAGService {
             return result;
         }
 
-        ProcessInstance subWorkflowInstance = processDao.findSubProcessInstance(
+        ProcessInstance subWorkflowInstance = processService.findSubProcessInstance(
                 taskInstance.getProcessInstanceId(), taskInstance.getId());
         if (subWorkflowInstance == null) {
             putMsg(result, Status.SUB_PROCESS_INSTANCE_NOT_EXIST, taskId);
@@ -356,7 +348,7 @@ public class ProcessInstanceService extends BaseDAGService {
         }
 
         //check process instance exists
-        ProcessInstance processInstance = processDao.findProcessInstanceDetailById(processInstanceId);
+        ProcessInstance processInstance = processService.findProcessInstanceDetailById(processInstanceId);
         if (processInstance == null) {
             putMsg(result, Status.PROCESS_INSTANCE_NOT_EXIST, processInstanceId);
             return result;
@@ -380,7 +372,7 @@ public class ProcessInstanceService extends BaseDAGService {
         String globalParams = null;
         String originDefParams = null;
         int timeout = processInstance.getTimeout();
-        ProcessDefinition processDefinition = processDao.findProcessDefineById(processInstance.getProcessDefinitionId());
+        ProcessDefinition processDefinition = processService.findProcessDefineById(processInstance.getProcessDefinitionId());
         if (StringUtils.isNotEmpty(processInstanceJson)) {
             ProcessData processData = JSONUtils.parseObject(processInstanceJson, ProcessData.class);
             //check workflow json is valid
@@ -396,7 +388,7 @@ public class ProcessInstanceService extends BaseDAGService {
                     processInstance.getCmdTypeIfComplement(), schedule);
             timeout = processData.getTimeout();
             processInstance.setTimeout(timeout);
-            Tenant tenant = processDao.getTenantForProcess(processData.getTenantId(),
+            Tenant tenant = processService.getTenantForProcess(processData.getTenantId(),
                     processDefinition.getUserId());
             if(tenant != null){
                 processInstance.setTenantCode(tenant.getTenantCode());
@@ -404,11 +396,10 @@ public class ProcessInstanceService extends BaseDAGService {
             processInstance.setProcessInstanceJson(processInstanceJson);
             processInstance.setGlobalParams(globalParams);
         }
-//        int update = processDao.updateProcessInstance(processInstanceId, processInstanceJson,
-//                globalParams, schedule, flag, locations, connects);
-        int update = processDao.updateProcessInstance(processInstance);
+
+        int update = processService.updateProcessInstance(processInstance);
         int updateDefine = 1;
-        if (syncDefine && StringUtils.isNotEmpty(processInstanceJson)) {
+        if (Boolean.TRUE.equals(syncDefine) && StringUtils.isNotEmpty(processInstanceJson)) {
             processDefinition.setProcessDefinitionJson(processInstanceJson);
             processDefinition.setGlobalParams(originDefParams);
             processDefinition.setLocations(locations);
@@ -445,7 +436,7 @@ public class ProcessInstanceService extends BaseDAGService {
             return checkResult;
         }
 
-        ProcessInstance subInstance = processDao.findProcessInstanceDetailById(subId);
+        ProcessInstance subInstance = processService.findProcessInstanceDetailById(subId);
         if (subInstance == null) {
             putMsg(result, Status.PROCESS_INSTANCE_NOT_EXIST, subId);
             return result;
@@ -455,7 +446,7 @@ public class ProcessInstanceService extends BaseDAGService {
             return result;
         }
 
-        ProcessInstance parentWorkflowInstance = processDao.findParentProcessInstance(subId);
+        ProcessInstance parentWorkflowInstance = processService.findParentProcessInstance(subId);
         if (parentWorkflowInstance == null) {
             putMsg(result, Status.SUB_PROCESS_INSTANCE_NOT_EXIST);
             return result;
@@ -472,11 +463,10 @@ public class ProcessInstanceService extends BaseDAGService {
      * @param loginUser login user
      * @param projectName project name
      * @param processInstanceId process instance id
-     * @param tasksQueue task queue
      * @return delete result code
      */
     @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> deleteProcessInstanceById(User loginUser, String projectName, Integer processInstanceId,ITaskQueue tasksQueue) {
+    public Map<String, Object> deleteProcessInstanceById(User loginUser, String projectName, Integer processInstanceId) {
 
         Map<String, Object> result = new HashMap<>(5);
         Project project = projectMapper.queryByName(projectName);
@@ -486,64 +476,20 @@ public class ProcessInstanceService extends BaseDAGService {
         if (resultEnum != Status.SUCCESS) {
             return checkResult;
         }
-        ProcessInstance processInstance = processDao.findProcessInstanceDetailById(processInstanceId);
-        List<TaskInstance> taskInstanceList = processDao.findValidTaskListByProcessId(processInstanceId);
+        ProcessInstance processInstance = processService.findProcessInstanceDetailById(processInstanceId);
+        List<TaskInstance> taskInstanceList = processService.findValidTaskListByProcessId(processInstanceId);
 
         if (null == processInstance) {
             putMsg(result, Status.PROCESS_INSTANCE_NOT_EXIST, processInstanceId);
             return result;
         }
 
-        //process instance priority
-        int processInstancePriority = processInstance.getProcessInstancePriority().ordinal();
-        // delete zk queue
-        if (CollectionUtils.isNotEmpty(taskInstanceList)){
-            for (TaskInstance taskInstance : taskInstanceList){
-                // task instance priority
-                int taskInstancePriority = taskInstance.getTaskInstancePriority().ordinal();
 
-                StringBuilder nodeValueSb = new StringBuilder(100);
-                nodeValueSb.append(processInstancePriority)
-                        .append(UNDERLINE)
-                        .append(processInstanceId)
-                        .append(UNDERLINE)
-                        .append(taskInstancePriority)
-                        .append(UNDERLINE)
-                        .append(taskInstance.getId())
-                        .append(UNDERLINE);
-
-                int taskWorkerGroupId = processDao.getTaskWorkerGroupId(taskInstance);
-                WorkerGroup workerGroup = workerGroupMapper.selectById(taskWorkerGroupId);
-
-                if(workerGroup == null){
-                    nodeValueSb.append(DEFAULT_WORKER_ID);
-                }else {
-
-                    String ips = workerGroup.getIpList();
-                    StringBuilder ipSb = new StringBuilder(100);
-                    String[] ipArray = ips.split(COMMA);
-
-                    for (String ip : ipArray) {
-                        long ipLong = IpUtils.ipToLong(ip);
-                        ipSb.append(ipLong).append(COMMA);
-                    }
-
-                    if(ipSb.length() > 0) {
-                        ipSb.deleteCharAt(ipSb.length() - 1);
-                    }
-                    nodeValueSb.append(ipSb);
-                }
-
-                logger.info("delete task queue node : {}",nodeValueSb.toString());
-                tasksQueue.removeNode(org.apache.dolphinscheduler.common.Constants.DOLPHINSCHEDULER_TASKS_QUEUE, nodeValueSb.toString());
-
-            }
-        }
 
         // delete database cascade
-        int delete = processDao.deleteWorkProcessInstanceById(processInstanceId);
-        processDao.deleteAllSubWorkProcessByParentId(processInstanceId);
-        processDao.deleteWorkProcessMapByParentId(processInstanceId);
+        int delete = processService.deleteWorkProcessInstanceById(processInstanceId);
+        processService.deleteAllSubWorkProcessByParentId(processInstanceId);
+        processService.deleteWorkProcessMapByParentId(processInstanceId);
 
         if (delete > 0) {
             putMsg(result, Status.SUCCESS);
@@ -611,7 +557,7 @@ public class ProcessInstanceService extends BaseDAGService {
                 Map<String,Object> localParamsMap = new HashMap<>();
                 localParamsMap.put("taskType",taskNode.getType());
                 localParamsMap.put("localParamsList",localParamsList);
-                if (localParamsList.size() > 0) {
+                if (CollectionUtils.isNotEmpty(localParamsList)) {
                     localUserDefParams.put(taskNode.getName(), localParamsMap);
                 }
             }

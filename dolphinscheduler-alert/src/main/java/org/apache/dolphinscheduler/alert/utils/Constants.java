@@ -20,7 +20,9 @@ package org.apache.dolphinscheduler.alert.utils;
  * constants
  */
 public class Constants {
-
+    private Constants() {
+        throw new IllegalStateException("Constants class");
+    }
     /**
      * alert properties path
      */
@@ -74,8 +76,6 @@ public class Constants {
     public static final String EXCEL_SUFFIX_XLS = ".xls";
 
     public static final int NUMBER_1000 = 1000;
-
-    public static final String ALERT_TEMPLATE = "alert.template";
 
     public static final String SPRING_DATASOURCE_DRIVER_CLASS_NAME = "spring.datasource.driver-class-name";
 

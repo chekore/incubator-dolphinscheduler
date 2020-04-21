@@ -25,7 +25,7 @@
 	</parent>
 	<artifactId>dolphinscheduler-server</artifactId>
 	<name>dolphinscheduler-server</name>
-	<url>http://maven.apache.org</url>
+
 	<packaging>jar</packaging>
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -36,10 +36,6 @@
 			<groupId>org.apache.dolphinscheduler</groupId>
 			<artifactId>dolphinscheduler-common</artifactId>
 			<exclusions>
-				<exclusion>
-					<artifactId>protobuf-java</artifactId>
-					<groupId>com.google.protobuf</groupId>
-				</exclusion>
 				<exclusion>
 					<groupId>io.netty</groupId>
 					<artifactId>netty</artifactId>
@@ -71,7 +67,7 @@
 
 		<dependency>
 			<groupId>org.apache.dolphinscheduler</groupId>
-			<artifactId>dolphinscheduler-rpc</artifactId>
+			<artifactId>dolphinscheduler-service</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.curator</groupId>
@@ -86,6 +82,12 @@
 		<dependency>
 			<groupId>org.apache.curator</groupId>
 			<artifactId>curator-recipes</artifactId>
+			<exclusions>
+				<exclusion>
+					<groupId>org.apache.zookeeper</groupId>
+					<artifactId>zookeeper</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.zookeeper</groupId>
@@ -132,7 +134,11 @@
 			<artifactId>mockito-core</artifactId>
 			<scope>test</scope>
 		</dependency>
-    </dependencies>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-test</artifactId>
+        </dependency>
+	</dependencies>
 
 
 	<build>

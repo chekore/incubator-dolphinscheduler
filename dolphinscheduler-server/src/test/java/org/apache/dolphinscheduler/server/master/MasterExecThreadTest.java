@@ -16,17 +16,17 @@
  */
 package org.apache.dolphinscheduler.server.master;
 
-import com.alibaba.fastjson.JSONObject;
+import com.alibaba.fastjson.JSON;
 import org.apache.dolphinscheduler.common.enums.*;
 import org.apache.dolphinscheduler.common.graph.DAG;
 import org.apache.dolphinscheduler.common.utils.DateUtils;
-import org.apache.dolphinscheduler.common.utils.SpringApplicationContext;
-import org.apache.dolphinscheduler.dao.ProcessDao;
 import org.apache.dolphinscheduler.dao.entity.ProcessDefinition;
 import org.apache.dolphinscheduler.dao.entity.ProcessInstance;
 import org.apache.dolphinscheduler.dao.entity.Schedule;
 import org.apache.dolphinscheduler.server.master.config.MasterConfig;
 import org.apache.dolphinscheduler.server.master.runner.MasterExecThread;
+import org.apache.dolphinscheduler.service.bean.SpringApplicationContext;
+import org.apache.dolphinscheduler.service.process.ProcessService;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -57,7 +57,7 @@ public class MasterExecThreadTest {
 
     private ProcessInstance processInstance;
 
-    private ProcessDao processDao;
+    private ProcessService processService;
 
     private int processDefinitionId = 1;
 
@@ -67,7 +67,7 @@ public class MasterExecThreadTest {
 
     @Before
     public void init() throws Exception{
-        processDao = mock(ProcessDao.class);
+        processService = mock(ProcessService.class);
 
         applicationContext = mock(ApplicationContext.class);
         config = new MasterConfig();
@@ -85,13 +85,13 @@ public class MasterExecThreadTest {
         Map<String, String> cmdParam = new HashMap<>();
         cmdParam.put(CMDPARAM_COMPLEMENT_DATA_START_DATE, "2020-01-01 00:00:00");
         cmdParam.put(CMDPARAM_COMPLEMENT_DATA_END_DATE, "2020-01-31 23:00:00");
-        Mockito.when(processInstance.getCommandParam()).thenReturn(JSONObject.toJSONString(cmdParam));
+        Mockito.when(processInstance.getCommandParam()).thenReturn(JSON.toJSONString(cmdParam));
         ProcessDefinition processDefinition = new ProcessDefinition();
         processDefinition.setGlobalParamMap(Collections.EMPTY_MAP);
         processDefinition.setGlobalParamList(Collections.EMPTY_LIST);
         Mockito.when(processInstance.getProcessDefinition()).thenReturn(processDefinition);
 
-        masterExecThread = PowerMockito.spy(new MasterExecThread(processInstance, processDao));
+        masterExecThread = PowerMockito.spy(new MasterExecThread(processInstance, processService,null));
         // prepareProcess init dag
         Field dag = MasterExecThread.class.getDeclaredField("dag");
         dag.setAccessible(true);
@@ -110,12 +110,12 @@ public class MasterExecThreadTest {
     @Test
     public void testParallelWithOutSchedule() throws ParseException {
         try{
-            Mockito.when(processDao.queryReleaseSchedulerListByProcessDefinitionId(processDefinitionId)).thenReturn(zeroSchedulerList());
+            Mockito.when(processService.queryReleaseSchedulerListByProcessDefinitionId(processDefinitionId)).thenReturn(zeroSchedulerList());
             Method method = MasterExecThread.class.getDeclaredMethod("executeComplementProcess");
             method.setAccessible(true);
             method.invoke(masterExecThread);
             // one create save, and 1-30 for next save, and last day 31 no save
-            verify(processDao, times(31)).saveProcessInstance(processInstance);
+            verify(processService, times(31)).saveProcessInstance(processInstance);
         }catch (Exception e){
             e.printStackTrace();
             Assert.assertTrue(false);
@@ -129,12 +129,12 @@ public class MasterExecThreadTest {
     @Test
     public void testParallelWithSchedule() throws ParseException {
         try{
-            Mockito.when(processDao.queryReleaseSchedulerListByProcessDefinitionId(processDefinitionId)).thenReturn(oneSchedulerList());
+            Mockito.when(processService.queryReleaseSchedulerListByProcessDefinitionId(processDefinitionId)).thenReturn(oneSchedulerList());
             Method method = MasterExecThread.class.getDeclaredMethod("executeComplementProcess");
             method.setAccessible(true);
             method.invoke(masterExecThread);
             // one create save, and 15(1 to 31 step 2) for next save, and last day 31 no save
-            verify(processDao, times(15)).saveProcessInstance(processInstance);
+            verify(processService, times(15)).saveProcessInstance(processInstance);
         }catch (Exception e){
             Assert.assertTrue(false);
         }
@@ -151,4 +151,5 @@ public class MasterExecThreadTest {
         schedulerList.add(schedule);
         return schedulerList;
     }
+
 }
